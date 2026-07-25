@@ -12,6 +12,8 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from aider.innovation_capabilities import CapabilityTokenBroker, CapabilityTokenError
+
 _ACTION_RE = re.compile(
     r"\[action:(?P<tool>[\w.-]+)(?P<attrs>[^\]]*)\](?P<body>.*?)\[/action\]",
     re.DOTALL | re.IGNORECASE,
@@ -52,16 +54,18 @@ class ExecutionResult:
 
 class ActionParser:
     def parse(self, text: str) -> list[ActionRequest]:
-        actions = []
+        actions: list[ActionRequest] = []
         for match in _ACTION_RE.finditer(text):
-            attrs = {}
+            attrs: dict[str, str] = {}
             for attr in _ATTR_RE.finditer(match.group("attrs")):
                 attrs[attr.group(1)] = next(
                     value for value in attr.groups()[1:] if value is not None
                 )
             actions.append(
                 ActionRequest(
-                    match.group("tool").lower(), match.group("body").strip(), attrs
+                    tool=match.group("tool").lower(),
+                    body=match.group("body").strip(),
+                    attributes=attrs,
                 )
             )
         return actions
@@ -69,8 +73,20 @@ class ActionParser:
 
 class ToolPolicy:
     READ_ONLY_COMMANDS = {
-        "cat", "cut", "diff", "find", "git", "grep", "head", "ls", "pwd",
-        "rg", "sed", "stat", "tail", "wc",
+        "cat",
+        "cut",
+        "diff",
+        "find",
+        "git",
+        "grep",
+        "head",
+        "ls",
+        "pwd",
+        "rg",
+        "sed",
+        "stat",
+        "tail",
+        "wc",
     }
     WRITE_COMMANDS = {"cp", "mkdir", "mv", "python", "python3", "touch"}
     NETWORK_COMMANDS = {"curl", "git", "npm", "pip", "wget"}
@@ -92,10 +108,11 @@ class ToolPolicy:
         self.allow_workspace_writes = allow_workspace_writes
 
     def evaluate(self, action: ActionRequest) -> GateDecision:
-        reasons = []
+        reasons: list[str] = []
         risk = RiskLevel.READ_ONLY
         if action.tool not in {"terminal", "powershell", "python", "mcp"}:
             return GateDecision(False, RiskLevel.DESTRUCTIVE, True, ("unknown tool",))
+
         if action.tool == "mcp":
             risk = RiskLevel.NETWORK
             reasons.append("MCP tools can cross process or network boundaries")
@@ -106,9 +123,7 @@ class ToolPolicy:
             try:
                 argv = shlex.split(action.body, posix=action.tool != "powershell")
             except ValueError as exc:
-                return GateDecision(
-                    False, RiskLevel.DESTRUCTIVE, True, (f"parse error: {exc}",)
-                )
+                return GateDecision(False, RiskLevel.DESTRUCTIVE, True, (f"parse error: {exc}",))
             if not argv:
                 return GateDecision(False, RiskLevel.READ_ONLY, False, ("empty command",))
             executable = Path(argv[0]).name.lower()
@@ -129,7 +144,7 @@ class ToolPolicy:
                 risk = RiskLevel.SECRET_ACCESS
                 reasons.append("command references a sensitive path")
 
-        if risk in {RiskLevel.SECRET_ACCESS, RiskLevel.DESTRUCTIVE}:
+        if risk == RiskLevel.SECRET_ACCESS or risk == RiskLevel.DESTRUCTIVE:
             return GateDecision(False, risk, True, tuple(reasons))
         if risk == RiskLevel.NETWORK:
             return GateDecision(self.allow_network, risk, True, tuple(reasons))
@@ -152,29 +167,57 @@ class ToolPolicy:
 
 
 class GatedSandbox:
-    """Process gate; use generated container commands for hard isolation."""
+    """Execute approved actions inside a workspace boundary.
 
-    def __init__(self, policy: ToolPolicy, *, timeout: int = 30) -> None:
+    This is a process gate, not a kernel sandbox. For hard isolation, use the
+    generated container command with an OS-level container runtime.
+    """
+
+    def __init__(
+        self,
+        policy: ToolPolicy,
+        *,
+        timeout: int = 30,
+        token_broker: CapabilityTokenBroker | None = None,
+    ) -> None:
         self.policy = policy
         self.timeout = timeout
+        self.token_broker = token_broker or CapabilityTokenBroker()
 
-    def run(self, action: ActionRequest, *, approved: bool = False) -> ExecutionResult:
+    def issue_capability(self, action: ActionRequest) -> str:
+        decision = self.policy.evaluate(action)
+        if not decision.allowed:
+            raise PermissionError("cannot grant a capability for a policy-blocked action")
+        if not decision.requires_approval:
+            raise ValueError("read-only actions do not require capability tokens")
+        return self.token_broker.issue(action, int(decision.risk))
+
+    def run(
+        self,
+        action: ActionRequest,
+        *,
+        approved: bool = False,
+        capability_token: str | None = None,
+    ) -> ExecutionResult:
         decision = self.policy.evaluate(action)
         if not decision.allowed:
             return ExecutionResult(126, "", "action blocked by policy", decision)
         if decision.requires_approval and not approved:
-            return ExecutionResult(125, "", "action requires approval", decision)
+            if capability_token is None:
+                return ExecutionResult(125, "", "action requires approval", decision)
+            try:
+                self.token_broker.consume(capability_token, action, int(decision.risk))
+            except CapabilityTokenError as exc:
+                return ExecutionResult(125, "", str(exc), decision)
         if action.tool not in {"terminal", "powershell"}:
             return ExecutionResult(
                 126, "", "direct execution is limited to shell actions", decision
             )
+
         cwd = self._resolve_cwd(action.attributes.get("cwd", "."))
         argv = shlex.split(action.body, posix=action.tool != "powershell")
-        env = {
-            key: value
-            for key, value in os.environ.items()
-            if key in {"PATH", "HOME", "LANG", "TERM"}
-        }
+        env_keys = {"PATH", "HOME", "LANG", "TERM"}
+        env = {key: value for key, value in os.environ.items() if key in env_keys}
         completed = subprocess.run(
             argv,
             cwd=cwd,
@@ -185,7 +228,10 @@ class GatedSandbox:
             check=False,
         )
         return ExecutionResult(
-            completed.returncode, completed.stdout, completed.stderr, decision
+            completed.returncode,
+            completed.stdout,
+            completed.stderr,
+            decision,
         )
 
     def container_command(
