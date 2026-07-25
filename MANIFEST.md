@@ -1,0 +1,59 @@
+# Change bundle manifest
+
+Files: 53
+
+| Path | Bytes | SHA-256 |
+|---|---:|---|
+| `APPLY.md` | 774 | `bcc2dc75b6ef881697d6ef92ab7e3da7d6712d140c3370673450f5a49be5c250` |
+| `aider/__init__.py` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `aider/innovation_actions.py` | 9538 | `81e715003c741a397769b7dd6ceccd65b21ced4b849d380306b7f6e1c71d2aec` |
+| `aider/innovation_adaptation.py` | 8862 | `afe5e5c6c96863596650d934900b8348999da97acfc42b402e4edf4cf71435e7` |
+| `aider/innovation_anchors.py` | 6700 | `88be0a2f766a9b1b8e600d576aa37a3c7fb0fc037ce084b0097b846062d4f7ee` |
+| `aider/innovation_arena.py` | 3579 | `54340bdcf4a4ef30e9d7087a7249be7a49969d36c7899d06d02fdc5b20777ada` |
+| `aider/innovation_budgets.py` | 5073 | `183b18ceb0a0d0377a8a8638147d3608f43e5cd336d2c446bff3e3a0733e75d8` |
+| `aider/innovation_cache.py` | 4801 | `075a7f950def95ef2a513e09fcfcdf3cd78652c6cbc51aa5b33d118996f34d2d` |
+| `aider/innovation_capabilities.py` | 3404 | `05c8ea018c1b846f0ed2bc3e305d76edc12aaddbc6f8801c8626f345d4b39225` |
+| `aider/innovation_capsules.py` | 9599 | `ff8fb54166c73faf43c6492802d1065220bc42b4a8bbfa3d1839d714560e4bc3` |
+| `aider/innovation_causal.py` | 2912 | `2f7fb41f6469fb5a5d286789669caea3cfe4139b31aa061a716a446e4c4c651f` |
+| `aider/innovation_cli.py` | 23978 | `8d6e73e5d46c4284861823d3a1b7fa5f2e7b51f7c0ac3243ff518bdd5a3dd7b7` |
+| `aider/innovation_context.py` | 8920 | `8f542e952f9d26ff501f73b4c48f3504b81b04177f82578dc507849d97fe87ec` |
+| `aider/innovation_contracts.py` | 6757 | `28ea291d166621835f6c0eeaba9a60f3e8d91867fdb0771b187380310f225325` |
+| `aider/innovation_diff.py` | 5666 | `fc4a7d8dc8b14d14765c95b0bd35e85b8cf5711db2589c1f1731f91d4b876e91` |
+| `aider/innovation_diversity.py` | 5483 | `710e79be39218629e5c0a2e86b89eba12d2f71cccc254688c4a9f708dc02b2f9` |
+| `aider/innovation_engine.py` | 13084 | `9c23d70074309ebe753b9f625184d9d32449488e49802afcf08a9bec5e5fc8c1` |
+| `aider/innovation_failures.py` | 5718 | `599ccd74d2c056d2de3f9de7c1843556a6ddd6e93080eafa390336d45ec6f049` |
+| `aider/innovation_graph.py` | 12814 | `a406d173d90b50e4e5f3a78374329a2fefa436591820139e7e15e87a7ffbb754` |
+| `aider/innovation_large_files.py` | 9039 | `5fc5dc1867cf5191fff6a90ac66b7d33026c116f2e72aa8e067f8a174da6c592` |
+| `aider/innovation_mcp.py` | 5286 | `807667e42f3b26c7773a34bc9f81a86cd7736fe3b56ef9e19f5f712a70d63a9d` |
+| `aider/innovation_mutation.py` | 4545 | `1387388205cd75d49abe0fa8accdcdab8af5a2531b169a09c36c49c95835220a` |
+| `aider/innovation_pressure.py` | 2928 | `401283b29c14dbec8d842a9813a3e79028bae6293983aea8e729241e1cb17990` |
+| `aider/innovation_repair.py` | 9054 | `10149aefb321cff4d6b11ddda52afe206172cafd92609ad835a500be956464ff` |
+| `aider/innovation_risk.py` | 6613 | `808bc80c2ce368f0ff741c51f7a4a62eca1dd0ef50e179058b803eaf4d47f455` |
+| `aider/innovation_routing.py` | 7075 | `ee618c1eaef8c9167bfc6da3b4f83aa31bd3f5341d83d19c63114659213879aa` |
+| `aider/innovation_semantic_edit.py` | 2277 | `9626a71dcc8b8b19dfd7af18012d77148520be8430bb28589a4b1d67a0ad2427` |
+| `aider/innovation_skills.py` | 5775 | `73a868dd732d0e48e122263d8eb247325713f270ca0a5b059e6263a3e999993c` |
+| `aider/innovation_tests.py` | 3528 | `7a51ba1aefa327b1d7b673ce2c0ccb2e74968b3fd704b5e20d8626f0cf2b3ee8` |
+| `aider/innovation_trajectory.py` | 4062 | `3860d0471881c1dc4e438a16a5842104d0c3cb4d33301eaa4d63b3f914d49c30` |
+| `docs/innovation-context-surgery.md` | 16250 | `54e94b8e1c6d7a211044eb17f6f1c53f1f8ad76ceb884e6ee613bcf92659c062` |
+| `pyproject.toml` | 1624 | `3b1086c40a60b21dd7f9496ffef766e919db6689ae0315106e974d18ef212945` |
+| `skills/causal-repair/SKILL.md` | 694 | `ccea3887b7b54d777616889233823dc82915548c802bbf3465e190783014c18b` |
+| `skills/dart/SKILL.md` | 510 | `2018654af288f43d8a1328faa6f238a2f2537344fafc942c33d747a4d9472e7e` |
+| `skills/git/SKILL.md` | 570 | `6141489faccc84517084c52b20750d2abe613462fccfe6a3b324bbbc4d881575` |
+| `skills/html/SKILL.md` | 382 | `63f2098ea397c2cfabd233946d1c037f2c50235fd534874a758c2a36780f4cb2` |
+| `skills/javascript/SKILL.md` | 523 | `4c323b7c9f00cba793715d61251118d15014cb1415ab61f4722a6a196c41d9a3` |
+| `skills/mcp/SKILL.md` | 624 | `6983af08260f9dcdbb08e11f8898c0734f155c9b2218fed17898ad607fe90b16` |
+| `skills/model-routing/SKILL.md` | 647 | `19a525adf8e13efc9a98c60baf577b31c293e16d86108833dba58b6d4d68995e` |
+| `skills/powershell/SKILL.md` | 448 | `ca8c01a25532184253f336b176c3ac81a4680fbe66898f9e426a304074788f85` |
+| `skills/python/SKILL.md` | 562 | `f9cfea8df5270e76fa6cad013e9caefc75513b48ab7a9d58522b5fbfb6b4300e` |
+| `skills/repair-orchestration/SKILL.md` | 660 | `4c2dc467d8bf383a7eccee4fd6b1c1c420e638f9cba63e7dd8798210f01ba577` |
+| `skills/skill-finder/SKILL.md` | 605 | `26e103a223a013f4c7bbea6ab379731c241f5bdb41774e3ea3ad162ec8449962` |
+| `skills/terminal/SKILL.md` | 464 | `82a0f9e9fa4b76bc5156362d40aa1a7286ba7a00e1aa36cd01c1608987980351` |
+| `skills/verification-arena/SKILL.md` | 711 | `59be4f02792a91287c2830b619c44853f30dd2f916546a989b48100e3b183f17` |
+| `tests/basic/test_innovation_context.py` | 993 | `59f259ab54a913a25407e366f89c75c9466ea34c74685d897a3cbba834dcf1f3` |
+| `tests/basic/test_innovation_large_files.py` | 1689 | `59b42a54127daecf1765f1dd02e8bd44b4b5dff108dabc9925644daccd82b3e5` |
+| `tests/basic/test_innovation_layer.py` | 3788 | `907f3b3701b5a38b388535ebebd9769e16b82d04bc0b261ef4652826e2e2bf6c` |
+| `tests/basic/test_innovation_skills_actions.py` | 1855 | `39cfa946848217ff83f2fda756e4102b6e22043d7e38c33984701ef04bbd2c97` |
+| `tests/basic/test_innovation_wave2.py` | 4855 | `2dfa68a096528de1e92a13063710c4576156debabc6da58b0f0469cd61778b05` |
+| `tests/basic/test_innovation_wave3.py` | 7347 | `3245861fc8d4d54c1fd637fc85e767a1f13bc244e79ecd51f5949672c721a4a4` |
+| `tests/basic/test_innovation_wave4.py` | 8486 | `a62fe74309d55a33f5c731a82aae06ba6202a7efd2851d30b6b752d9968f533d` |
+| `tests/basic/test_innovation_wave5.py` | 7582 | `65ae4a368390495838202eb547ad40e44536a92ef94cf444b18c4a716730ca87` |
