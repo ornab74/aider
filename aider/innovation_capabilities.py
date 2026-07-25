@@ -1,4 +1,4 @@
-"""One-time, action-bound capability tokens for gated tool execution."""
+"""One-time, action-bound capability tokens for process-level tool gates."""
 
 from __future__ import annotations
 
@@ -8,59 +8,72 @@ import hmac
 import json
 import secrets
 import time
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 
-class CapabilityTokenError(RuntimeError):
+class CapabilityTokenError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
-class CapabilityGrant:
-    action_digest: str
-    expires_at: int
-    nonce: str
-
-
-class CapabilityTokenIssuer:
-    def __init__(self, secret: bytes | None = None) -> None:
-        self.secret = secret or secrets.token_bytes(32)
-        self.used_nonces: set[str] = set()
-
-    def issue(self, action: Any, *, ttl_seconds: int = 120) -> str:
+class CapabilityTokenBroker:
+    def __init__(
+        self,
+        secret: bytes | None = None,
+        *,
+        ttl_seconds: int = 300,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         if ttl_seconds < 1:
             raise ValueError("ttl_seconds must be positive")
-        payload = {
-            "action_digest": self.action_digest(action),
-            "expires_at": int(time.time()) + ttl_seconds,
-            "nonce": secrets.token_urlsafe(18),
-        }
-        encoded = self._encode(json.dumps(payload, sort_keys=True).encode())
-        signature = self._encode(hmac.new(self.secret, encoded.encode(), hashlib.sha256).digest())
-        return f"{encoded}.{signature}"
+        self.secret = secret or secrets.token_bytes(32)
+        self.ttl_seconds = ttl_seconds
+        self.clock = clock
+        self._consumed: set[str] = set()
 
-    def consume(self, token: str, action: Any) -> CapabilityGrant:
+    def issue(self, action: Any, risk: int) -> str:
+        now = int(self.clock())
+        payload = {
+            "nonce": secrets.token_urlsafe(18),
+            "issued": now,
+            "expires": now + self.ttl_seconds,
+            "action": self.action_digest(action),
+            "max_risk": int(risk),
+        }
+        body = self._encode(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        )
+        signature = self._encode(
+            hmac.new(self.secret, body.encode(), hashlib.sha256).digest()
+        )
+        return f"{body}.{signature}"
+
+    def consume(self, token: str, action: Any, risk: int) -> None:
+        payload = self._decode_and_verify(token)
+        nonce = str(payload["nonce"])
+        if nonce in self._consumed:
+            raise CapabilityTokenError("capability token has already been consumed")
+        if int(self.clock()) > int(payload["expires"]):
+            raise CapabilityTokenError("capability token expired")
+        if payload["action"] != self.action_digest(action):
+            raise CapabilityTokenError("capability token is bound to another action")
+        if int(risk) > int(payload["max_risk"]):
+            raise CapabilityTokenError("action risk exceeds token grant")
+        self._consumed.add(nonce)
+
+    def _decode_and_verify(self, token: str) -> dict[str, object]:
         try:
-            encoded, signature = token.split(".", 1)
+            body, supplied_signature = token.split(".", 1)
         except ValueError as exc:
             raise CapabilityTokenError("malformed capability token") from exc
-        expected = self._encode(hmac.new(self.secret, encoded.encode(), hashlib.sha256).digest())
-        if not hmac.compare_digest(signature, expected):
+        expected = self._encode(
+            hmac.new(self.secret, body.encode(), hashlib.sha256).digest()
+        )
+        if not hmac.compare_digest(supplied_signature, expected):
             raise CapabilityTokenError("invalid capability token signature")
         try:
-            payload = json.loads(self._decode(encoded))
-            grant = CapabilityGrant(**payload)
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            return json.loads(self._decode(body))
+        except (ValueError, json.JSONDecodeError) as exc:
             raise CapabilityTokenError("invalid capability token payload") from exc
-        if grant.expires_at < int(time.time()):
-            raise CapabilityTokenError("capability token expired")
-        if grant.nonce in self.used_nonces:
-            raise CapabilityTokenError("capability token already consumed")
-        if grant.action_digest != self.action_digest(action):
-            raise CapabilityTokenError("capability token does not match this action")
-        self.used_nonces.add(grant.nonce)
-        return grant
 
     @staticmethod
     def action_digest(action: Any) -> str:
