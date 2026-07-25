@@ -68,6 +68,24 @@ python -m aider.innovation_cli --help
 19. MCP schema slimming.
 20. Automatic draft skill authoring from repeated successful workflows.
 
+## Wave two: durable context and risk controls
+
+The second implementation wave completes seven of the original follow-on ideas:
+
+- **Context leases:** selected slices receive bounded lifetimes. Used slices renew and unused slices expire, preventing stale context accumulation.
+- **Context provenance:** every selection and use records its path, range, query, reasons, and content fingerprint.
+- **Resumable capsules:** packets, pinned state, leases, and provenance can be serialized and verified against the current workspace.
+- **AST symbol anchors:** Python symbols are fingerprinted structurally so formatting and line movement do not invalidate anchors.
+- **Stage budgets:** search, edit, test, and repair receive separate token and time allowances; risky patches reserve more verification capacity.
+- **Blast-radius and quorum:** diffs are scored for volume, critical paths, manifests, public APIs, and missing tests. High-risk patches require two matching votes; critical patches require three.
+- **One-time capability tokens:** sensitive approvals are cryptographically bound to one exact action, expire, and fail on replay or command substitution.
+
+The `InnovationEngine` coordinates these controls and can checkpoint a verified context capsule after analysis.
+
+## Remaining research backlog
+
+The strongest next candidates are symbol call-chain packets, failure-localized retries, risk-aware model routing, semantic SED from verified anchors, large-diff folding, dependency heat maps, counterfactual test selection, MCP schema slimming, and automatic skill authoring from repeated successful workflows.
+
 ## Security boundary
 
 `GatedSandbox` is a policy and process gate, not kernel isolation. Use its generated Docker command, a disposable VM, or another hardened sandbox for untrusted models and packages. Network, destructive, and secret-access actions are blocked by default.
