@@ -8,7 +8,12 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from aider.innovation_routing import RiskAwareModelRouter, RoutingDecision, RoutingRequest, RoutingStage
+from aider.innovation_routing import (
+    RiskAwareModelRouter,
+    RoutingDecision,
+    RoutingRequest,
+    RoutingStage,
+)
 
 
 class RepairPhase(str, Enum):
@@ -63,6 +68,7 @@ class RepairOrchestrator:
                 RoutingStage.SEARCH,
                 context_tokens,
                 risk_score=session.risk_score,
+                privacy_required=False,
                 preferred_tags=("search",),
             )
         )
@@ -74,7 +80,13 @@ class RepairOrchestrator:
             ("session initialized",),
         )
 
-    def record_edit(self, session: RepairSession, *, tokens: int, context_tokens: int = 1800) -> RepairDecision:
+    def record_edit(
+        self,
+        session: RepairSession,
+        *,
+        tokens: int,
+        context_tokens: int = 1800,
+    ) -> RepairDecision:
         self._consume(session, tokens)
         if session.remaining_tokens <= 0:
             return self._pause(session, "edit consumed the remaining token budget")
@@ -82,7 +94,11 @@ class RepairOrchestrator:
         stage = RoutingStage.TEST if session.tests_available else RoutingStage.VERIFY
         return RepairDecision(
             session.phase,
-            "run counterfactually selected tests" if session.tests_available else "verify diff and invariants",
+            (
+                "run counterfactually selected tests"
+                if session.tests_available
+                else "verify diff and invariants"
+            ),
             self.router.route(
                 RoutingRequest(
                     stage,
@@ -155,7 +171,13 @@ class RepairOrchestrator:
                     )
                 ),
                 True,
-                ("failure repeated without progress" if repeated else "repair retry limit reached",),
+                (
+                    (
+                        "failure repeated without progress"
+                        if repeated
+                        else "repair retry limit reached"
+                    ),
+                ),
             )
         session.phase = RepairPhase.REPAIR
         return RepairDecision(
@@ -191,13 +213,12 @@ class RepairOrchestrator:
         if session.remaining_tokens <= 0:
             return self._pause(session, "increase or reallocate budget before resuming")
         session.phase = RepairPhase.REPAIR if session.attempts else RepairPhase.SEARCH
-        stage = RoutingStage.REPAIR if session.attempts else RoutingStage.SEARCH
         return RepairDecision(
             session.phase,
-            "resume from checkpoint with active leases and failure evidence",
+            "resume from checkpoint with only active leases and failure evidence",
             self.router.route(
                 RoutingRequest(
-                    stage,
+                    RoutingStage.REPAIR if session.attempts else RoutingStage.SEARCH,
                     min(1600, session.remaining_tokens),
                     risk_score=session.risk_score,
                     retries=session.attempts,

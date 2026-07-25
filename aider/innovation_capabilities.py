@@ -39,12 +39,8 @@ class CapabilityTokenBroker:
             "action": self.action_digest(action),
             "max_risk": int(risk),
         }
-        body = self._encode(
-            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        )
-        signature = self._encode(
-            hmac.new(self.secret, body.encode(), hashlib.sha256).digest()
-        )
+        body = self._encode(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
+        signature = self._encode(hmac.new(self.secret, body.encode(), hashlib.sha256).digest())
         return f"{body}.{signature}"
 
     def consume(self, token: str, action: Any, risk: int) -> None:
@@ -65,9 +61,7 @@ class CapabilityTokenBroker:
             body, supplied_signature = token.split(".", 1)
         except ValueError as exc:
             raise CapabilityTokenError("malformed capability token") from exc
-        expected = self._encode(
-            hmac.new(self.secret, body.encode(), hashlib.sha256).digest()
-        )
+        expected = self._encode(hmac.new(self.secret, body.encode(), hashlib.sha256).digest())
         if not hmac.compare_digest(supplied_signature, expected):
             raise CapabilityTokenError("invalid capability token signature")
         try:

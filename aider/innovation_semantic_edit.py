@@ -23,7 +23,11 @@ class SemanticSedPlanner:
         self.editor = SearchFirstEditor()
 
     def plan(
-        self, path: str | Path, text: str, symbol: str, replacement: str
+        self,
+        path: str | Path,
+        text: str,
+        symbol: str,
+        replacement: str,
     ) -> SemanticEditPlan:
         anchor = self.anchors.create(text, symbol, path=str(path))
         resolution = self.anchors.resolve(text, anchor)

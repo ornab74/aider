@@ -234,9 +234,7 @@ class GatedSandbox:
             decision,
         )
 
-    def container_command(
-        self, action: ActionRequest, *, image: str = "python:3.12-slim"
-    ) -> str:
+    def container_command(self, action: ActionRequest, *, image: str = "python:3.12-slim") -> str:
         workspace = shlex.quote(str(self.policy.workspace))
         body = shlex.quote(action.body)
         return (

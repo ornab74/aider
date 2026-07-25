@@ -35,12 +35,13 @@ class SkillRegistry:
         self.skills: list[Skill] = []
 
     def discover(self) -> list[Skill]:
-        found = []
+        found: list[Skill] = []
         seen: set[Path] = set()
         for root in self.roots:
             if not root.exists():
                 continue
-            for pattern in ("SKILL.md", "*.skill.md"):
+            patterns = ("SKILL.md", "*.skill.md")
+            for pattern in patterns:
                 for path in root.rglob(pattern):
                     resolved = path.resolve()
                     if resolved in seen:
@@ -54,17 +55,24 @@ class SkillRegistry:
         if not self.skills:
             self.discover()
         terms = query_terms(query)
-        matches = []
+        matches: list[SkillMatch] = []
         for skill in self.skills:
             score = self._score(skill, terms, query)
-            if score > 0:
-                matches.append(
-                    SkillMatch(skill, score, self.summarize(skill, query, max_chars=summary_chars))
+            if score <= 0:
+                continue
+            matches.append(
+                SkillMatch(
+                    skill=skill,
+                    score=score,
+                    summary=self.summarize(skill, query, max_chars=summary_chars),
                 )
+            )
         matches.sort(key=lambda match: (-match.score, match.skill.name.lower()))
         return matches[:limit]
 
     def resolve_modifier(self, text: str) -> tuple[str | None, str]:
+        """Resolve `@skill:name` or `[skill:name]` and return cleaned task text."""
+
         pattern = re.compile(r"(?:@skill:|\[skill:)([\w.-]+)\]?", re.IGNORECASE)
         match = pattern.search(text)
         if not match:
@@ -73,15 +81,16 @@ class SkillRegistry:
 
     def summarize(self, skill: Skill, query: str, *, max_chars: int = 1800) -> str:
         terms = query_terms(query)
-        ranked = []
-        for heading, content in self._sections(skill.body):
+        sections = self._sections(skill.body)
+        ranked: list[tuple[float, str]] = []
+        for heading, content in sections:
             haystack = f"{heading}\n{content}".lower()
             score = sum(haystack.count(term) for term in terms)
             if heading.lower() in {"workflow", "safety", "commands", "usage", "rules"}:
                 score += 1.5
             ranked.append((score, f"## {heading}\n{content.strip()}"))
         ranked.sort(key=lambda item: -item[0])
-        chosen = []
+        chosen: list[str] = []
         length = 0
         for score, section in ranked:
             if score <= 0 and chosen:
@@ -90,6 +99,8 @@ class SkillRegistry:
                 continue
             chosen.append(section)
             length += len(section)
+            if length >= max_chars:
+                break
         if not chosen:
             chosen = [skill.body[:max_chars].strip()]
         return f"# {skill.name}\n{skill.description}\n\n" + "\n\n".join(chosen)
@@ -102,22 +113,19 @@ class SkillRegistry:
         match = _FRONTMATTER_RE.match(text)
         if match:
             for line in match.group(1).splitlines():
-                if ":" in line:
-                    key, value = line.split(":", 1)
-                    metadata[key.strip().lower()] = value.strip().strip("\"'")
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                metadata[key.strip().lower()] = value.strip().strip('"\'')
             body = text[match.end() :]
+        name = metadata.get("name") or path.parent.name or path.stem
+        description = metadata.get("description", "")
         tags = tuple(
             item.strip()
             for item in metadata.get("tags", "").strip("[]").split(",")
             if item.strip()
         )
-        return Skill(
-            metadata.get("name") or path.parent.name or path.stem,
-            metadata.get("description", ""),
-            path,
-            body,
-            tags,
-        )
+        return Skill(name=name, description=description, path=path, body=body, tags=tags)
 
     @staticmethod
     def _score(skill: Skill, terms: set[str], raw_query: str) -> float:
@@ -143,8 +151,9 @@ class SkillRegistry:
         headings = list(_HEADING_RE.finditer(body))
         if not headings:
             return [("Instructions", body)]
-        sections = []
+        sections: list[tuple[str, str]] = []
         for index, match in enumerate(headings):
+            start = match.end()
             end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
-            sections.append((match.group(2).strip(), body[match.end() : end].strip()))
+            sections.append((match.group(2).strip(), body[start:end].strip()))
         return sections

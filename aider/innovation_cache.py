@@ -38,7 +38,13 @@ class ContextArtifactCache:
         self.max_entries = max_entries
         self.entries: OrderedDict[str, CacheEntry] = OrderedDict()
 
-    def key_for(self, query: str, files: Mapping[str, str], *, namespace: str = "context-v1") -> str:
+    def key_for(
+        self,
+        query: str,
+        files: Mapping[str, str],
+        *,
+        namespace: str = "context-v1",
+    ) -> str:
         payload = {
             "namespace": namespace,
             "query": " ".join(query.split()),
@@ -80,7 +86,7 @@ class ContextArtifactCache:
         entry = self.entries.get(key)
         if entry is None:
             return CacheLookup(False, None, "no exact content-addressed entry", key)
-        self.entries[key] = CacheEntry(
+        updated = CacheEntry(
             entry.key,
             entry.query,
             entry.file_digests,
@@ -88,6 +94,7 @@ class ContextArtifactCache:
             entry.created_at,
             entry.hits + 1,
         )
+        self.entries[key] = updated
         self.entries.move_to_end(key)
         return CacheLookup(True, entry.packet, "query and file digests match", key)
 

@@ -58,9 +58,7 @@ class ContextPressureMonitor:
                 "checkpoint stable facts and pin only the active dependency neighborhood"
             )
         if score >= 70:
-            recommendations.append(
-                "route to a larger-context model or split the task into stages"
-            )
+            recommendations.append("route to a larger-context model or split the task into stages")
         if not recommendations:
             recommendations.append("retain the current bounded context plan")
         return ContextPressureReport(
@@ -84,7 +82,5 @@ class ContextPressureMonitor:
             for right in slices[index + 1 :]:
                 right_terms = query_terms(right.text)
                 union = left_terms | right_terms
-                similarities.append(
-                    len(left_terms & right_terms) / len(union) if union else 0.0
-                )
+                similarities.append(len(left_terms & right_terms) / len(union) if union else 0.0)
         return sum(similarities) / max(1, len(similarities))

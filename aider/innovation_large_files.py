@@ -79,7 +79,7 @@ class LargeFileDetector:
         size_bytes = len(text.encode("utf-8"))
         line_count = text.count("\n") + (1 if text else 0)
         tokens = estimate_tokens(text)
-        reasons = []
+        reasons: list[str] = []
         if size_bytes >= self.byte_threshold:
             reasons.append(f"bytes>={self.byte_threshold}")
         if line_count >= self.line_threshold:
@@ -87,20 +87,28 @@ class LargeFileDetector:
         if tokens >= self.token_threshold:
             reasons.append(f"tokens>={self.token_threshold}")
         return LargeFileProfile(
-            str(file_path), size_bytes, line_count, tokens, bool(reasons), tuple(reasons)
+            path=str(file_path),
+            size_bytes=size_bytes,
+            line_count=line_count,
+            token_estimate=tokens,
+            is_large=bool(reasons),
+            reasons=tuple(reasons),
         )
 
 
 class SearchFirstEditor:
+    """Create and apply bounded edits without loading a full file into a prompt."""
+
     def build_search_plan(self, path: str | Path, query: str) -> SearchPlan:
         terms = self._search_terms(query)
         quoted_path = shlex.quote(str(path))
         pattern = "|".join(re.escape(term) for term in terms) or re.escape(query.strip())
+        quoted_pattern = shlex.quote(pattern)
         return SearchPlan(
-            str(path),
-            tuple(terms),
-            f"rg -n -C 8 --no-heading -e {shlex.quote(pattern)} {quoted_path}",
-            f"sed -n '1,220p' {quoted_path}",
+            path=str(path),
+            terms=tuple(terms),
+            ripgrep_command=f"rg -n -C 8 --no-heading -e {quoted_pattern} {quoted_path}",
+            sed_preview_command=f"sed -n '1,220p' {quoted_path}",
         )
 
     def extract_windows(
@@ -115,16 +123,20 @@ class SearchFirstEditor:
         if not terms:
             return []
         lines = text.splitlines()
-        hits = [
-            index
-            for index, line in enumerate(lines)
-            if any(term.lower() in line.lower() for term in terms)
-        ]
+        hits: list[int] = []
+        lowered_terms = [term.lower() for term in terms]
+        for index, line in enumerate(lines):
+            lowered = line.lower()
+            if any(term in lowered for term in lowered_terms):
+                hits.append(index)
         ranges = self._merge_ranges(
-            (max(0, hit - context_lines), min(len(lines), hit + context_lines + 1))
+            (
+                max(0, hit - context_lines),
+                min(len(lines), hit + context_lines + 1),
+            )
             for hit in hits
         )
-        windows = []
+        windows: list[SearchWindow] = []
         for start, end in ranges[:max_windows]:
             numbered = "\n".join(
                 f"{line_no:>6} | {line}"
@@ -135,7 +147,14 @@ class SearchFirstEditor:
                 for term in terms
                 if any(term.lower() in line.lower() for line in lines[start:end])
             )
-            windows.append(SearchWindow(start + 1, end, numbered, matched))
+            windows.append(
+                SearchWindow(
+                    start_line=start + 1,
+                    end_line=end,
+                    text=numbered,
+                    matched_terms=matched,
+                )
+            )
         return windows
 
     def make_edit(
@@ -149,13 +168,18 @@ class SearchFirstEditor:
     ) -> SurgicalEdit:
         self._validate_range(text, start_line, end_line)
         return SurgicalEdit(
-            str(path), start_line, end_line, self.sha256(text), replacement
+            path=str(path),
+            start_line=start_line,
+            end_line=end_line,
+            expected_sha256=self.sha256(text),
+            replacement=replacement,
         )
 
     def apply(self, edit: SurgicalEdit, *, allow_write: bool = False) -> EditResult:
         path = Path(edit.path)
         original = path.read_text(encoding="utf-8")
-        if self.sha256(original) != edit.expected_sha256:
+        current_hash = self.sha256(original)
+        if current_hash != edit.expected_sha256:
             raise RuntimeError("file changed after the edit was planned; refusing stale edit")
         self._validate_range(original, edit.start_line, edit.end_line)
         old_lines = original.splitlines(keepends=True)
@@ -178,17 +202,25 @@ class SearchFirstEditor:
         )
         if allow_write and updated != original:
             self._atomic_write(path, updated)
-        return EditResult(str(path), updated != original, diff, self.sha256(updated))
+        return EditResult(
+            path=str(path),
+            changed=updated != original,
+            diff=diff,
+            new_sha256=self.sha256(updated),
+        )
 
     def build_verified_sed_script(self, edit: SurgicalEdit) -> str:
+        """Return a portable backup/verify/sed recipe for a planned line edit."""
+
         replacement = edit.replacement.replace("\\", "\\\\").replace("\n", "\\\n")
+        quoted_path = shlex.quote(edit.path)
         expression = f"{edit.start_line},{edit.end_line}c\\\n{replacement}"
         return (
             "set -euo pipefail\n"
-            f"file={shlex.quote(edit.path)}\n"
+            f"file={quoted_path}\n"
             f"expected={shlex.quote(edit.expected_sha256)}\n"
             "actual=$(sha256sum \"$file\" | awk '{print $1}')\n"
-            "[ \"$actual\" = \"$expected\" ] || exit 2\n"
+            "[ \"$actual\" = \"$expected\" ] || { echo 'stale edit; aborting' >&2; exit 2; }\n"
             "cp -- \"$file\" \"$file.aider-bak\"\n"
             f"sed -i {shlex.quote(expression)} \"$file\"\n"
             "diff -u \"$file.aider-bak\" \"$file\" || true\n"
@@ -224,6 +256,7 @@ class SearchFirstEditor:
 
     @staticmethod
     def _atomic_write(path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:

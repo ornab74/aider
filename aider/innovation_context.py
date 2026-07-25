@@ -1,4 +1,9 @@
-"""Adaptive, query-focused context packets for small-context coding models."""
+"""Adaptive, query-focused context packets for small-context coding models.
+
+The module is intentionally dependency-free so it can be used before Aider has
+finished loading its model/provider stack. It favors many small, explainable
+context slices over dumping entire files into a prompt.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +22,8 @@ _SYMBOL_RE = re.compile(
 
 
 def estimate_tokens(text: str, chars_per_token: float = 4.0) -> int:
+    """Return a conservative token estimate without importing a tokenizer."""
+
     if not text:
         return 0
     return max(1, math.ceil(len(text) / max(chars_per_token, 1.0)))
@@ -66,6 +73,8 @@ class ContextPacket:
 
 @dataclass
 class FloatingContextState:
+    """Small state surface that can follow a task without retaining whole files."""
+
     pinned_paths: set[str] = field(default_factory=set)
     touched_paths: list[str] = field(default_factory=list)
     facts: dict[str, str] = field(default_factory=dict)
@@ -87,6 +96,8 @@ class FloatingContextState:
 
 
 class FloatingContextManager:
+    """Build bounded, diverse context packets from arbitrary source text."""
+
     def __init__(
         self,
         max_tokens: int = 4096,
@@ -211,6 +222,8 @@ class FloatingContextManager:
                 score += max(2.0, 10.0 - distance * 0.5)
                 reasons.append("recently touched")
 
+            # Keep a small structural prior so symbol-rich regions can appear even
+            # when the user describes the task differently from the code spelling.
             structural_lines = sum(
                 1
                 for line in chunk_lines
@@ -244,6 +257,10 @@ class FloatingContextManager:
         for existing in chosen:
             if existing.path != candidate.path:
                 continue
-            if candidate.start_line <= existing.end_line and existing.start_line <= candidate.end_line:
+            overlaps = (
+                candidate.start_line <= existing.end_line
+                and existing.start_line <= candidate.end_line
+            )
+            if overlaps:
                 return True
         return False

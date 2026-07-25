@@ -1,4 +1,4 @@
-"""Expiring context leases, provenance records, and resumable capsules."""
+"""Expiring context leases, provenance ledgers, and resumable capsules."""
 
 from __future__ import annotations
 
@@ -7,66 +7,94 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Iterable, Mapping
 
-from aider.innovation_context import ContextPacket, FloatingContextState
+from aider.innovation_context import ContextPacket, ContextSlice, FloatingContextState
+
+CAPSULE_VERSION = 1
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def slice_id(path: str, start_line: int, end_line: int, text: str) -> str:
-    payload = f"{path}\0{start_line}\0{end_line}\0{text}".encode()
-    return hashlib.sha256(payload).hexdigest()[:24]
+def slice_fingerprint(item: ContextSlice) -> str:
+    payload = f"{item.path}\0{item.start_line}\0{item.end_line}\0{item.text}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 @dataclass
 class ContextLease:
     slice_id: str
     path: str
+    start_line: int
+    end_line: int
     remaining_turns: int
-    renewals: int = 0
+    pinned: bool = False
+    last_query: str = ""
 
 
 class ContextLeaseBook:
-    def __init__(self, default_turns: int = 3) -> None:
+    def __init__(self, *, default_turns: int = 2) -> None:
         if default_turns < 1:
             raise ValueError("default_turns must be positive")
         self.default_turns = default_turns
         self.leases: dict[str, ContextLease] = {}
 
     def reconcile(self, packet: ContextPacket) -> tuple[str, ...]:
-        active = []
+        ids = []
         for item in packet.slices:
-            identifier = slice_id(item.path, item.start_line, item.end_line, item.text)
-            active.append(identifier)
-            lease = self.leases.get(identifier)
-            if lease:
-                lease.remaining_turns = self.default_turns
-                lease.renewals += 1
-            else:
+            identifier = slice_fingerprint(item)
+            ids.append(identifier)
+            if identifier not in self.leases:
                 self.leases[identifier] = ContextLease(
-                    identifier, item.path, self.default_turns
+                    identifier,
+                    item.path,
+                    item.start_line,
+                    item.end_line,
+                    self.default_turns,
+                    False,
+                    packet.query,
                 )
-        return tuple(active)
+            else:
+                self.leases[identifier].last_query = packet.query
+        return tuple(ids)
 
-    def mark_used(self, identifier: str) -> None:
-        lease = self.leases[identifier]
-        lease.remaining_turns = self.default_turns
-        lease.renewals += 1
-
-    def advance(self) -> tuple[str, ...]:
+    def advance(self, *, used_slice_ids: Iterable[str] = ()) -> tuple[str, ...]:
+        used = set(used_slice_ids)
         expired = []
         for identifier, lease in list(self.leases.items()):
-            lease.remaining_turns -= 1
-            if lease.remaining_turns <= 0:
+            if identifier in used:
+                lease.remaining_turns = self.default_turns
+            elif not lease.pinned:
+                lease.remaining_turns -= 1
+            if lease.remaining_turns <= 0 and not lease.pinned:
                 expired.append(identifier)
                 del self.leases[identifier]
         return tuple(expired)
 
-    def is_active(self, identifier: str) -> bool:
-        return identifier in self.leases
+    def pin(self, slice_id: str) -> None:
+        self.leases[slice_id].pinned = True
+
+    def unpin(self, slice_id: str) -> None:
+        self.leases[slice_id].pinned = False
+
+    def is_active(self, slice_id: str) -> bool:
+        return slice_id in self.leases
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "default_turns": self.default_turns,
+            "leases": [asdict(item) for item in self.leases.values()],
+        }
+
+    @classmethod
+    def from_snapshot(cls, value: Mapping[str, object]) -> "ContextLeaseBook":
+        book = cls(default_turns=int(value.get("default_turns", 2)))
+        for raw in value.get("leases", []):
+            lease = ContextLease(**raw)
+            book.leases[lease.slice_id] = lease
+        return book
 
 
 @dataclass(frozen=True)
@@ -79,7 +107,7 @@ class ProvenanceRecord:
     query: str
     content_sha256: str
     reasons: tuple[str, ...]
-    timestamp: str
+    observed_at: str
 
 
 @dataclass
@@ -87,10 +115,10 @@ class ContextProvenanceLedger:
     records: list[ProvenanceRecord] = field(default_factory=list)
 
     def record_packet(self, packet: ContextPacket) -> tuple[str, ...]:
-        identifiers = []
+        ids = []
         for item in packet.slices:
-            identifier = slice_id(item.path, item.start_line, item.end_line, item.text)
-            identifiers.append(identifier)
+            identifier = slice_fingerprint(item)
+            ids.append(identifier)
             self.records.append(
                 ProvenanceRecord(
                     "selected",
@@ -99,20 +127,20 @@ class ContextProvenanceLedger:
                     item.start_line,
                     item.end_line,
                     packet.query,
-                    hashlib.sha256(item.text.encode()).hexdigest(),
+                    hashlib.sha256(item.text.encode("utf-8")).hexdigest(),
                     item.reasons,
                     _utc_now(),
                 )
             )
-        return tuple(identifiers)
+        return tuple(ids)
 
-    def record_use(self, identifier: str, *, query: str = "") -> None:
+    def record_use(self, slice_id: str, *, query: str = "") -> None:
         selected = next(
-            (item for item in reversed(self.records) if item.slice_id == identifier),
+            (item for item in reversed(self.records) if item.slice_id == slice_id),
             None,
         )
         if selected is None:
-            raise KeyError(identifier)
+            raise KeyError(slice_id)
         self.records.append(
             ProvenanceRecord(
                 "used",
@@ -127,34 +155,39 @@ class ContextProvenanceLedger:
             )
         )
 
+    def to_list(self) -> list[dict[str, object]]:
+        return [asdict(record) for record in self.records]
 
-@dataclass(frozen=True)
-class CapsuleSlice:
-    slice_id: str
-    path: str
-    start_line: int
-    end_line: int
-    content_sha256: str
-    text: str
+    @classmethod
+    def from_list(cls, values: Iterable[Mapping[str, object]]) -> "ContextProvenanceLedger":
+        records = []
+        for raw in values:
+            converted = dict(raw)
+            converted["reasons"] = tuple(converted.get("reasons", ()))
+            records.append(ProvenanceRecord(**converted))
+        return cls(records)
 
 
 @dataclass(frozen=True)
 class CapsuleVerification:
-    valid: bool
-    stale_slice_ids: tuple[str, ...]
+    valid_slice_ids: tuple[str, ...]
+    changed_slice_ids: tuple[str, ...]
     missing_paths: tuple[str, ...]
+
+    @property
+    def valid(self) -> bool:
+        return not self.changed_slice_ids and not self.missing_paths
 
 
 @dataclass
 class ContextCapsule:
-    version: int
-    created_at: str
     query: str
-    packet_budget: int
-    slices: list[CapsuleSlice]
-    state: dict[str, object]
-    leases: list[dict[str, object]]
-    provenance: list[dict[str, object]]
+    packet: ContextPacket
+    state: FloatingContextState
+    leases: ContextLeaseBook
+    provenance: ContextProvenanceLedger
+    created_at: str = field(default_factory=_utc_now)
+    version: int = CAPSULE_VERSION
 
     @classmethod
     def capture(
@@ -164,60 +197,90 @@ class ContextCapsule:
         leases: ContextLeaseBook,
         provenance: ContextProvenanceLedger,
     ) -> "ContextCapsule":
-        slices = [
-            CapsuleSlice(
-                slice_id(item.path, item.start_line, item.end_line, item.text),
-                item.path,
-                item.start_line,
-                item.end_line,
-                hashlib.sha256(item.text.encode()).hexdigest(),
-                item.text,
-            )
-            for item in packet.slices
-        ]
-        return cls(
-            1,
-            _utc_now(),
-            packet.query,
-            packet.budget,
-            slices,
-            {
-                "pinned_paths": sorted(state.pinned_paths),
-                "touched_paths": list(state.touched_paths),
-                "facts": dict(state.facts),
-            },
-            [asdict(item) for item in leases.leases.values()],
-            [asdict(item) for item in provenance.records],
-        )
+        return cls(packet.query, packet, state, leases, provenance)
 
     def save(self, path: str | Path) -> None:
-        payload = asdict(self)
-        Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        Path(path).write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
 
     @classmethod
     def load(cls, path: str | Path) -> "ContextCapsule":
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        payload["slices"] = [CapsuleSlice(**item) for item in payload["slices"]]
-        return cls(**payload)
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+        if value.get("version") != CAPSULE_VERSION:
+            raise ValueError(f"unsupported capsule version: {value.get('version')}")
+        return cls.from_dict(value)
 
     def verify(self, files: Mapping[str, str]) -> CapsuleVerification:
-        stale = []
-        missing = []
-        for item in self.slices:
-            text = files.get(item.path)
-            if text is None:
-                missing.append(item.path)
+        valid = []
+        changed = []
+        missing = set()
+        for item in self.packet.slices:
+            if item.path not in files:
+                missing.add(item.path)
                 continue
-            lines = text.splitlines()
-            current = "\n".join(lines[item.start_line - 1 : item.end_line])
-            numbered = "\n".join(
-                f"{line_no:>6} | {line}"
-                for line_no, line in enumerate(
-                    lines[item.start_line - 1 : item.end_line],
-                    start=item.start_line,
-                )
-            )
-            if hashlib.sha256(numbered.encode()).hexdigest() != item.content_sha256:
-                if hashlib.sha256(current.encode()).hexdigest() != item.content_sha256:
-                    stale.append(item.slice_id)
-        return CapsuleVerification(not stale and not missing, tuple(stale), tuple(missing))
+            reconstructed = self._numbered_window(files[item.path], item.start_line, item.end_line)
+            identifier = slice_fingerprint(item)
+            if reconstructed == item.text:
+                valid.append(identifier)
+            else:
+                changed.append(identifier)
+        return CapsuleVerification(tuple(valid), tuple(changed), tuple(sorted(missing)))
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "version": self.version,
+            "created_at": self.created_at,
+            "query": self.query,
+            "packet": {
+                "query": self.packet.query,
+                "slices": [asdict(item) for item in self.packet.slices],
+                "token_estimate": self.packet.token_estimate,
+                "budget": self.packet.budget,
+                "omitted_candidates": self.packet.omitted_candidates,
+            },
+            "state": {
+                "pinned_paths": sorted(self.state.pinned_paths),
+                "touched_paths": list(self.state.touched_paths),
+                "facts": dict(self.state.facts),
+            },
+            "leases": self.leases.snapshot(),
+            "provenance": self.provenance.to_list(),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "ContextCapsule":
+        packet_value = value["packet"]
+        slices = []
+        for raw in packet_value["slices"]:
+            converted = dict(raw)
+            converted["reasons"] = tuple(converted.get("reasons", ()))
+            slices.append(ContextSlice(**converted))
+        packet = ContextPacket(
+            query=packet_value["query"],
+            slices=tuple(slices),
+            token_estimate=packet_value["token_estimate"],
+            budget=packet_value["budget"],
+            omitted_candidates=packet_value.get("omitted_candidates", 0),
+        )
+        state_value = value["state"]
+        state = FloatingContextState(
+            pinned_paths=set(state_value.get("pinned_paths", [])),
+            touched_paths=list(state_value.get("touched_paths", [])),
+            facts=dict(state_value.get("facts", {})),
+        )
+        return cls(
+            query=value["query"],
+            packet=packet,
+            state=state,
+            leases=ContextLeaseBook.from_snapshot(value["leases"]),
+            provenance=ContextProvenanceLedger.from_list(value.get("provenance", [])),
+            created_at=value["created_at"],
+            version=value["version"],
+        )
+
+    @staticmethod
+    def _numbered_window(text: str, start_line: int, end_line: int) -> str:
+        lines = text.splitlines()
+        return "\n".join(
+            f"{line_no:>6} | {line}"
+            for line_no, line in enumerate(lines[start_line - 1 : end_line], start=start_line)
+        )

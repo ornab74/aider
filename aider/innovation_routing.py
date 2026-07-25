@@ -66,12 +66,15 @@ class RiskAwareModelRouter:
     def route(self, request: RoutingRequest) -> RoutingDecision:
         eligible = [profile for profile in self.profiles if self._eligible(profile, request)]
         if not eligible:
-            raise ValueError("no model can satisfy the requested constraints")
+            raise ValueError(
+                "no model can satisfy the requested context, output, and tool constraints"
+            )
         scored = sorted(
             ((self._score(profile, request), profile) for profile in eligible),
             key=lambda item: (-item[0], item[1].name),
         )
         score, primary = scored[0]
+        reasons = self._reasons(primary, request)
         verifier = self._verifier(primary, request, eligible)
         trigger = None
         if request.retries >= 2:
@@ -80,27 +83,38 @@ class RiskAwareModelRouter:
             trigger = "critical blast radius"
         elif request.risk_score >= 45:
             trigger = "high-risk patch requires independent verification"
-        return RoutingDecision(
-            primary,
-            verifier,
-            score,
-            tuple(self._reasons(primary, request)),
-            trigger,
-        )
+        return RoutingDecision(primary, verifier, score, tuple(reasons), trigger)
 
     @staticmethod
     def default_profiles() -> tuple[ModelProfile, ...]:
         return (
             ModelProfile(
-                "local-fast", 16_384, 2_048, 0.55, 0.62, 0.95,
-                local=True, tags=("search", "summarize"),
+                "local-fast",
+                16_384,
+                2_048,
+                quality=0.55,
+                tool_reliability=0.62,
+                speed=0.95,
+                local=True,
+                tags=("search", "summarize"),
             ),
             ModelProfile(
-                "local-code", 32_768, 4_096, 0.72, 0.76, 0.72,
-                local=True, tags=("code", "edit", "repair"),
+                "local-code",
+                32_768,
+                4_096,
+                quality=0.72,
+                tool_reliability=0.76,
+                speed=0.72,
+                local=True,
+                tags=("code", "edit", "repair"),
             ),
             ModelProfile(
-                "specialist-code", 131_072, 8_192, 0.92, 0.90, 0.42,
+                "specialist-code",
+                131_072,
+                8_192,
+                quality=0.92,
+                tool_reliability=0.90,
+                speed=0.42,
                 tags=("code", "verify", "architecture"),
             ),
         )
@@ -129,14 +143,26 @@ class RiskAwareModelRouter:
         }[request.stage]
         reliability = profile.tool_reliability * (0.15 + risk * 0.25)
         quality = profile.quality * risk * 0.35
-        local_bonus = 0.18 if request.privacy_required and profile.local else 0.04 if profile.local else 0.0
+        local_bonus = (
+            0.18
+            if request.privacy_required and profile.local
+            else 0.04 if profile.local else 0.0
+        )
         tag_bonus = 0.03 * len(set(profile.tags) & set(request.preferred_tags))
         retry_bonus = request.retries * profile.quality * 0.04
-        headroom = max(
+        capacity_headroom = max(
             0.0,
             1.0 - (request.context_tokens + request.output_tokens) / profile.context_window,
         )
-        return stage_quality + reliability + quality + local_bonus + tag_bonus + retry_bonus + headroom * 0.05
+        return (
+            stage_quality
+            + reliability
+            + quality
+            + local_bonus
+            + tag_bonus
+            + retry_bonus
+            + capacity_headroom * 0.05
+        )
 
     def _verifier(
         self,

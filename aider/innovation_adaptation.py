@@ -2,22 +2,32 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from aider.innovation_skills import SkillMatch, SkillRegistry
 
 _LANGUAGE_BY_SUFFIX = {
-    ".py": "python", ".pyi": "python", ".dart": "dart",
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
-    ".ts": "typescript", ".tsx": "typescript", ".html": "html",
-    ".htm": "html", ".ps1": "powershell", ".psm1": "powershell",
-    ".sh": "terminal", ".bash": "terminal",
+    ".py": "python",
+    ".pyi": "python",
+    ".dart": "dart",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".html": "html",
+    ".htm": "html",
+    ".ps1": "powershell",
+    ".psm1": "powershell",
+    ".sh": "terminal",
+    ".bash": "terminal",
 }
 _FENCE_RE = re.compile(r"```\s*([\w+-]+)")
 
@@ -32,18 +42,19 @@ class LanguageSignal:
 class LanguageDetector:
     def detect(self, query: str, paths: Iterable[str] = ()) -> LanguageSignal:
         votes: Counter[str] = Counter()
-        evidence = []
+        evidence: list[str] = []
         for raw_path in paths:
-            language = _LANGUAGE_BY_SUFFIX.get(Path(raw_path).suffix.lower())
+            suffix = Path(raw_path).suffix.lower()
+            language = _LANGUAGE_BY_SUFFIX.get(suffix)
             if language:
                 votes[language] += 3
                 evidence.append(f"{raw_path} -> {language}")
         for language in _FENCE_RE.findall(query.lower()):
-            language = {"js": "javascript", "ts": "typescript", "pwsh": "powershell"}.get(
+            normalized = {"js": "javascript", "ts": "typescript", "pwsh": "powershell"}.get(
                 language, language
             )
-            votes[language] += 4
-            evidence.append(f"code fence -> {language}")
+            votes[normalized] += 4
+            evidence.append(f"code fence -> {normalized}")
         lowered = query.lower()
         aliases = {
             "python": ("python", "pytest", "pip"),
@@ -76,7 +87,12 @@ class SkillSwapDecision:
 
 
 class SkillHotSwapController:
-    def __init__(self, registry: SkillRegistry, *, hysteresis: float = 4.0) -> None:
+    def __init__(
+        self,
+        registry: SkillRegistry,
+        *,
+        hysteresis: float = 4.0,
+    ) -> None:
         self.registry = registry
         self.hysteresis = hysteresis
         self.detector = LanguageDetector()
@@ -89,8 +105,8 @@ class SkillHotSwapController:
         matches = self.registry.find(augmented, limit=3)
         best = matches[0] if matches else None
         previous = self.active_skill
-        changed = False
         reasons = []
+        changed = False
         if best is None:
             reasons.append("no matching skill discovered")
         elif previous is None:
@@ -109,7 +125,12 @@ class SkillHotSwapController:
         else:
             reasons.append("hysteresis retained current skill")
         return SkillSwapDecision(
-            signal, previous, self.active_skill, changed, best, tuple(reasons)
+            signal,
+            previous,
+            self.active_skill,
+            changed,
+            best,
+            tuple(reasons),
         )
 
 
@@ -121,7 +142,22 @@ class WorkflowRecord:
     checks: tuple[str, ...]
     success: bool
     risk_notes: tuple[str, ...] = ()
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+    @property
+    def fingerprint(self) -> str:
+        normalized = json.dumps(
+            {
+                "task": " ".join(self.task.lower().split()),
+                "language": self.language.lower(),
+                "commands": self.commands,
+                "checks": self.checks,
+            },
+            sort_keys=True,
+        )
+        return hashlib.sha256(normalized.encode()).hexdigest()[:20]
 
 
 class WorkflowMemory:
@@ -133,7 +169,8 @@ class WorkflowMemory:
 
     def successful_cluster(self, language: str) -> list[WorkflowRecord]:
         return [
-            record for record in self.records
+            record
+            for record in self.records
             if record.success and record.language.lower() == language.lower()
         ]
 
@@ -165,35 +202,57 @@ class SkillDraftAuthor:
 
     def draft(self, name: str, language: str, records: Iterable[WorkflowRecord]) -> DraftSkill:
         successful = [
-            record for record in records
+            record
+            for record in records
             if record.success and record.language.lower() == language.lower()
         ]
         ready = len(successful) >= self.minimum_successes
         commands = self._common(successful, "commands")
         checks = self._common(successful, "checks")
-        risks = self._common(successful, "risk_notes")
+        risk_notes = self._common(successful, "risk_notes")
+        description = f"Repeated successful {language} workflow for {name.replace('-', ' ')}."
         content = (
             "---\n"
             f"name: {name}\n"
-            f"description: Repeated successful {language} workflow for {name.replace('-', ' ')}.\n"
+            f"description: {description}\n"
             f"tags: [{language}, generated, workflow]\n"
-            "---\n# Workflow\n"
-            + ("\n".join(f"1. `{item}`" for item in commands) or "1. Reproduce the proven workflow manually.")
+            "---\n"
+            "# Workflow\n"
+            + (
+                "\n".join(f"1. `{command}`" for command in commands)
+                or "1. Reproduce the proven workflow manually."
+            )
             + "\n\n# Validation\n"
-            + ("\n".join(f"- `{item}`" for item in checks) or "- Run the narrowest relevant validation.")
+            + (
+                "\n".join(f"- `{check}`" for check in checks)
+                or "- Run the narrowest relevant validation."
+            )
             + "\n\n# Safety\n"
-            + ("\n".join(f"- {item}" for item in risks) or "- Preview writes and gate destructive or network actions.")
+            + (
+                "\n".join(f"- {note}" for note in risk_notes)
+                or (
+                    "- Preview writes and require approval for destructive "
+                    "or network actions."
+                )
+            )
             + "\n"
         )
         return DraftSkill(name, content, len(successful), ready)
 
-    def write(self, draft: DraftSkill, root: str | Path, *, allow_write: bool = False) -> Path:
+    def write(
+        self,
+        draft: DraftSkill,
+        root: str | Path,
+        *,
+        allow_write: bool = False,
+    ) -> Path:
         if not draft.ready:
             raise ValueError("draft does not have enough successful evidence")
         path = Path(root) / draft.name / "SKILL.md"
-        if allow_write:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(draft.content, encoding="utf-8")
+        if not allow_write:
+            return path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(draft.content, encoding="utf-8")
         return path
 
     @staticmethod
